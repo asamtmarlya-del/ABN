@@ -10,7 +10,7 @@ const adminId = '6326755118';
 
 const app = express();
 const appServer = http.createServer(app);
-const appBot = new telegramBot(token, {polling: true});
+let appBot = null;
 
 app.use(bodyParser.json());
 
@@ -19,126 +19,162 @@ const databaseFile = path.join(__dirname, 'files_db.json');
 
 if (!fs.existsSync(storageDir)) fs.mkdirSync(storageDir);
 
-function loadDatabase() {
-    if (fs.existsSync(databaseFile)) {
-        return JSON.parse(fs.readFileSync(databaseFile, 'utf8'));
+// تهيئة البوت
+function initializeBot() {
+    try {
+        appBot = new telegramBot(token, {polling: true});
+        console.log('✅ تم تهيئة البوت بنجاح');
+        setupBotListeners();
+    } catch (err) {
+        console.error('❌ خطأ في تهيئة البوت:', err.message);
+        setTimeout(initializeBot, 5000);
     }
-    return { files: {} };
 }
 
-function saveDatabase(data) {
-    fs.writeFileSync(databaseFile, JSON.stringify(data, null, 2));
-}
-
-function getUserDir(userId) {
-    const dir = path.join(storageDir, userId.toString());
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-    return dir;
-}
-
-app.get('/', (req, res) => {
-    res.send('<h1 align="center">☁️ بوت رفع وحفظ الملفات ☁️</h1>');
-});
-
-appBot.on('message', (message) => {
-    const chatId = message.chat.id;
-    const userId = message.from.id;
-    const text = message.text;
-
-    if (text === '/start') {
-        appBot.sendMessage(chatId,
-            '☁️ مرحباً بك في بوت رفع وحفظ الملفات\n\n' +
-            '💾 الميزات:\n' +
-            '📤 رفع أي نوع ملف\n' +
-            '💿 حفظ آمن على السيرفر\n' +
-            '📥 تحميل ملفاتك في أي وقت\n' +
-            '📊 إدارة كاملة للملفات\n\n' +
-            '👨‍💻 بواسطة قائد 『ABN @Aosab\n\n' +
-            'اختر من الخيارات:',
-            {
-                reply_markup: {
-                    keyboard: [
-                        [{text: '📤 رفع ملف'}, {text: '📥 تحميل ملف'}],
-                        [{text: '📋 قائمة ملفاتي'}, {text: '🗑️ حذف ملف'}],
-                        [{text: 'ℹ️ معلومات'}]
-                    ],
-                    resize_keyboard: true
-                }
-            }
-        );
-    }
-    else if (text === '📤 رفع ملف') {
-        appBot.sendMessage(chatId,
-            '📤 ارسل الملف الذي تريد رفعه:\n\n' +
-            '✅ جميع أنواع الملفات مدعومة\n' +
-            '✅ الحد الأقصى: 50 MB\n' +
-            '💾 سيتم حفظه بأمان'
-        );
-    }
-    else if (text === '📥 تحميل ملف') {
-        const db = loadDatabase();
-        const userFiles = db.files[userId] || [];
-        
-        if (userFiles.length === 0) {
-            appBot.sendMessage(chatId, '❌ لا توجد ملفات محفوظة');
-            return;
-        }
-
-        const keyboard = userFiles.map(f => [{text: `📄 ${f.name}`}]);
-        appBot.sendMessage(chatId, '📥 اختر ملف للتحميل:', {
-            reply_markup: { keyboard, resize_keyboard: true }
-        });
-    }
-    else if (text === '📋 قائمة ملفاتي') {
-        const db = loadDatabase();
-        const userFiles = db.files[userId] || [];
-        
-        if (userFiles.length === 0) {
-            appBot.sendMessage(chatId, '❌ لا توجد ملفات محفوظة');
-            return;
-        }
-
-        let list = '📋 ملفاتك:\n\n';
-        userFiles.forEach((f, i) => {
-            const sizeMB = (f.size / 1024 / 1024).toFixed(2);
-            list += `${i + 1}. 📄 ${f.name}\n   📊 الحجم: ${sizeMB} MB\n   📅 التاريخ: ${f.date}\n\n`;
-        });
-
-        appBot.sendMessage(chatId, list);
-    }
-    else if (text === '🗑️ حذف ملف') {
-        const db = loadDatabase();
-        const userFiles = db.files[userId] || [];
-        
-        if (userFiles.length === 0) {
-            appBot.sendMessage(chatId, '❌ لا توجد ملفات للحذف');
-            return;
-        }
-
-        const keyboard = userFiles.map(f => [{text: `🗑️ ${f.name}`}]);
-        appBot.sendMessage(chatId, '🗑️ اختر ملف للحذف:', {
-            reply_markup: { keyboard, resize_keyboard: true }
-        });
-    }
-    else if (text === 'ℹ️ معلومات') {
-        appBot.sendMessage(chatId,
-            'ℹ️ معلومات البوت:\n\n' +
-            '☁️ بوت رفع وحفظ الملفات\n\n' +
-            '🔒 الأمان:\n' +
-            '✅ ملفاتك محفوظة بشكل آمن\n' +
-            '✅ محمية بـ user ID خاص بك\n' +
-            '✅ تشفير البيانات\n\n' +
-            '📊 الحدود:\n' +
-            '✅ حد الملف: 10000 GB\n' +
-            '✅ عدد الملفات: غير محدود\n' +
-            '✅ وقت التخزين: دائم\n\n' +
-            '👨‍💻 تم انشاء هذا البوت بواسطة قائد 『ABN\n' +
-            '📱 @Aosab'
-        );
-    }
+// معالجات البوت
+function setupBotListeners() {
+    appBot.on('message', handleMessage);
     
-    // معالجة الملفات المرفوعة
-    else if (message.document) {
+    appBot.on('polling_error', (error) => {
+        console.error('❌ خطأ Polling:', error.message);
+        if (appBot) {
+            appBot.stopPolling().catch(console.error);
+        }
+        setTimeout(() => {
+            console.log('🔄 إعادة محاولة الاتصال...');
+            initializeBot();
+        }, 5000);
+    });
+
+    appBot.on('error', (error) => {
+        console.error('❌ خطأ في البوت:', error.message);
+    });
+}
+
+// معالج الرسائل الرئيسي
+function handleMessage(message) {
+    try {
+        const chatId = message.chat.id;
+        const userId = message.from.id;
+        const text = message.text;
+
+        if (text === '/start') {
+            appBot.sendMessage(chatId,
+                '☁️ مرحباً بك في بوت رفع وحفظ الملفات\n\n' +
+                '💾 الميزات:\n' +
+                '📤 رفع أي نوع ملف\n' +
+                '💿 حفظ آمن على السيرفر\n' +
+                '📥 تحميل ملفاتك في أي وقت\n' +
+                '📊 إدارة كاملة للملفات\n\n' +
+                '👨‍💻 بواسطة قائد 『ABN @Aosab\n\n' +
+                'اختر من الخيارات:',
+                {
+                    reply_markup: {
+                        keyboard: [
+                            [{text: '📤 رفع ملف'}, {text: '📥 تحميل ملف'}],
+                            [{text: '📋 قائمة ملفاتي'}, {text: '🗑️ حذف ملف'}],
+                            [{text: 'ℹ️ معلومات'}]
+                        ],
+                        resize_keyboard: true
+                    }
+                }
+            );
+        }
+        else if (text === '📤 رفع ملف') {
+            appBot.sendMessage(chatId,
+                '📤 ارسل الملف الذي تريد رفعه:\n\n' +
+                '✅ جميع أنواع الملفات مدعومة\n' +
+                '✅ الحد الأقصى: 10000 GB\n' +
+                '💾 سيتم حفظه بأمان'
+            );
+        }
+        else if (text === '📥 تحميل ملف') {
+            const db = loadDatabase();
+            const userFiles = db.files[userId] || [];
+            
+            if (userFiles.length === 0) {
+                appBot.sendMessage(chatId, '❌ لا توجد ملفات محفوظة');
+                return;
+            }
+
+            const keyboard = userFiles.map(f => [{text: `📄 ${f.name}`}]);
+            appBot.sendMessage(chatId, '📥 اختر ملف للتحميل:', {
+                reply_markup: { keyboard, resize_keyboard: true }
+            });
+        }
+        else if (text === '📋 قائمة ملفاتي') {
+            const db = loadDatabase();
+            const userFiles = db.files[userId] || [];
+            
+            if (userFiles.length === 0) {
+                appBot.sendMessage(chatId, '❌ لا توجد ملفات محفوظة');
+                return;
+            }
+
+            let list = '📋 ملفاتك:\n\n';
+            userFiles.forEach((f, i) => {
+                const sizeMB = (f.size / 1024 / 1024).toFixed(2);
+                list += `${i + 1}. 📄 ${f.name}\n   📊 الحجم: ${sizeMB} MB\n   📅 التاريخ: ${f.date}\n\n`;
+            });
+
+            appBot.sendMessage(chatId, list);
+        }
+        else if (text === '🗑️ حذف ملف') {
+            const db = loadDatabase();
+            const userFiles = db.files[userId] || [];
+            
+            if (userFiles.length === 0) {
+                appBot.sendMessage(chatId, '❌ لا توجد ملفات للحذف');
+                return;
+            }
+
+            const keyboard = userFiles.map(f => [{text: `🗑️ ${f.name}`}]);
+            appBot.sendMessage(chatId, '🗑️ اختر ملف للحذف:', {
+                reply_markup: { keyboard, resize_keyboard: true }
+            });
+        }
+        else if (text === 'ℹ️ معلومات') {
+            appBot.sendMessage(chatId,
+                'ℹ️ معلومات البوت:\n\n' +
+                '☁️ بوت رفع وحفظ الملفات\n\n' +
+                '🔒 الأمان:\n' +
+                '✅ ملفاتك محفوظة بشكل آمن\n' +
+                '✅ محمية بـ user ID خاص بك\n' +
+                '✅ تشفير البيانات\n\n' +
+                '📊 الحدود:\n' +
+                '✅ حد الملف: 10000 GB\n' +
+                '✅ عدد الملفات: غير محدود\n' +
+                '✅ وقت التخزين: دائم\n\n' +
+                '👨‍💻 تم انشاء هذا البوت بواسطة قائد 『ABN\n' +
+                '📱 @Aosab'
+            );
+        }
+        
+        // معالجة الملفات المرفوعة
+        else if (message.document) {
+            handleFileUpload(message, chatId, userId);
+        }
+        else if (message.audio || message.video || message.photo || message.voice) {
+            handleMediaUpload(message, chatId, userId);
+        }
+        else if (text && text.startsWith('📄 ')) {
+            handleFileDownload(text, chatId, userId);
+        }
+        else if (text && text.startsWith('🗑️ ')) {
+            handleFileDelete(text, chatId, userId);
+        }
+    } catch (err) {
+        console.error('❌ خطأ في معالجة الرسالة:', err);
+        try {
+            appBot.sendMessage(message.chat.id, '❌ حدث خطأ، حاول لاحقاً');
+        } catch (e) {
+            console.error('❌ فشل إرسال رسالة الخطأ:', e);
+        }
+    }
+}
+
+function handleFileUpload(message, chatId, userId) {
+    try {
         const file = message.document;
         const fileName = file.file_name;
         const fileSize = file.file_size;
@@ -193,11 +229,18 @@ appBot.on('message', (message) => {
                 );
             })
             .catch(err => {
-                appBot.sendMessage(chatId, `❌ خطأ: ${err.message}`);
+                console.error('❌ خطأ في رفع الملف:', err);
+                appBot.sendMessage(chatId, `❌ خطأ: ${err.message}`).catch(console.error);
             });
+    } catch (err) {
+        console.error('❌ خطأ في معالجة الملف:', err);
+        appBot.sendMessage(chatId, '❌ حدث خطأ في الرفع').catch(console.error);
     }
-    else if (message.audio || message.video || message.photo || message.voice) {
-        appBot.sendMessage(chatId, '📤 الملفات الوسائط تُحفظ بنفس الطريقة\n⏳ جاري المعالجة...');
+}
+
+function handleMediaUpload(message, chatId, userId) {
+    try {
+        appBot.sendMessage(chatId, '📤 جاري المعالجة...');
         
         let fileId;
         let fileName = `file_${Date.now()}`;
@@ -249,13 +292,19 @@ appBot.on('message', (message) => {
                 });
 
                 saveDatabase(db);
-                appBot.sendMessage(chatId, `✅ تم حفظ الملف: ${fileInfo.name}`);
+                appBot.sendMessage(chatId, `✅ تم حفظ الملف: ${fileInfo.name}`).catch(console.error);
             })
             .catch(err => {
-                appBot.sendMessage(chatId, `❌ خطأ: ${err.message}`);
+                console.error('❌ خطأ في حفظ الملف:', err);
+                appBot.sendMessage(chatId, `❌ خطأ: ${err.message}`).catch(console.error);
             });
+    } catch (err) {
+        console.error('❌ خطأ في معالجة الوسائط:', err);
     }
-    else if (text && text.startsWith('📄 ')) {
+}
+
+function handleFileDownload(text, chatId, userId) {
+    try {
         const db = loadDatabase();
         const fileName = text.substring(3);
         const userFiles = db.files[userId] || [];
@@ -269,9 +318,18 @@ appBot.on('message', (message) => {
         appBot.sendMessage(chatId, '⏳ جاري تحضير الملف...');
         appBot.sendDocument(chatId, file.path, {
             caption: `📄 ${file.name}\n📊 الحجم: ${(file.size / 1024 / 1024).toFixed(2)} MB`
+        }).catch(err => {
+            console.error('❌ خطأ في تحميل الملف:', err);
+            appBot.sendMessage(chatId, '❌ فشل تحميل الملف').catch(console.error);
         });
+    } catch (err) {
+        console.error('❌ خطأ في معالجة التحميل:', err);
+        appBot.sendMessage(chatId, '❌ حدث خطأ').catch(console.error);
     }
-    else if (text && text.startsWith('🗑️ ')) {
+}
+
+function handleFileDelete(text, chatId, userId) {
+    try {
         const db = loadDatabase();
         const fileName = text.substring(3);
         const userFiles = db.files[userId] || [];
@@ -291,15 +349,75 @@ appBot.on('message', (message) => {
         db.files[userId] = userFiles;
         saveDatabase(db);
 
-        appBot.sendMessage(chatId, `✅ تم حذف الملف: ${fileName}`);
+        appBot.sendMessage(chatId, `✅ تم حذف الملف: ${fileName}`).catch(console.error);
+    } catch (err) {
+        console.error('❌ خطأ في حذف الملف:', err);
+        appBot.sendMessage(chatId, '❌ فشل حذف الملف').catch(console.error);
     }
+}
+
+// دوال مساعدة
+function loadDatabase() {
+    try {
+        if (fs.existsSync(databaseFile)) {
+            return JSON.parse(fs.readFileSync(databaseFile, 'utf8'));
+        }
+    } catch (err) {
+        console.error('❌ خطأ في قراءة قاعدة البيانات:', err);
+    }
+    return { files: {} };
+}
+
+function saveDatabase(data) {
+    try {
+        fs.writeFileSync(databaseFile, JSON.stringify(data, null, 2));
+    } catch (err) {
+        console.error('❌ خطأ في حفظ قاعدة البيانات:', err);
+    }
+}
+
+function getUserDir(userId) {
+    const dir = path.join(storageDir, userId.toString());
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+}
+
+// صحة الخادم
+app.get('/', (req, res) => {
+    res.send('<h1 align="center">☁️ بوت رفع وحفظ الملفات - يعمل بنجاح ✅</h1>');
 });
 
-appBot.on('polling_error', (error) => {
-    console.error('Polling error:', error);
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date() });
 });
 
+// keep-alive للمنع من التوقف
+setInterval(() => {
+    try {
+        if (!appBot) {
+            console.log('🔄 إعادة تهيئة البوت...');
+            initializeBot();
+        }
+    } catch (err) {
+        console.error('❌ خطأ في keep-alive:', err);
+    }
+}, 30000);
+
+// بدء الخادم والبوت
 const PORT = process.env.PORT || 8099;
 appServer.listen(PORT, () => {
-    console.log(`✅ بوت رفع وحفظ الملفات يعمل على المنفذ ${PORT}`);
+    console.log(`✅ الخادم يعمل على المنفذ ${PORT}`);
+    initializeBot();
+});
+
+// معالجة الأخطاء غير المعالجة
+process.on('uncaughtException', (err) => {
+    console.error('❌ خطأ غير متوقع:', err);
+    console.log('🔄 سيتم إعادة تشغيل البوت تلقائياً...');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ وعد مرفوض:', reason);
 });
